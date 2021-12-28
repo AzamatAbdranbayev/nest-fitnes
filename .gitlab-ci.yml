@@ -1,0 +1,48 @@
+stages:
+    - publish
+    - deploy
+
+variables:
+    TAG_LATEST: $CI_REGISTRY_IMAGE/$CI_COMMIT_REF_NAME:latest
+    TAG_COMMIT: $CI_REGISTRY_IMAGE/$CI_COMMIT_REF_NAME:$CI_COMMIT_SHORT_SHA
+
+publish:
+    image: docker:latest
+    stage: publish
+    services:
+        - docker:dind
+    script:
+        - echo $CI_REGISTRY_IMAGE
+        - echo $CI_COMMIT_SHORT_SHA
+        - docker build -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA -t $CI_REGISTRY_IMAGE:latest .
+        - docker login -u gitlab-ci-token -p $CI_BUILD_TOKEN $CI_REGISTRY
+        - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
+        - docker push $CI_REGISTRY_IMAGE:latest
+    only:
+        - master
+
+deploy:
+    image: alpine:latest
+    stage: deploy
+    tags:
+        - deployment
+    script:
+        - chmod og= $ID_RSA
+        - apk update && apk add openssh-client
+        - ssh -i $ID_RSA -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_IP "docker login -u gitlab-ci-token -p $CI_BUILD_TOKEN $CI_REGISTRY"
+        - ssh -i $ID_RSA -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_IP "docker stop $CI_PROJECT_NAME || true"
+        - ssh -i $ID_RSA -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_IP "docker rm $CI_PROJECT_NAME || true"
+        - ssh -i $ID_RSA -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_IP "docker rmi $CI_REGISTRY_IMAGE:latest || true "
+        - ssh -i $ID_RSA -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_IP "docker pull $CI_REGISTRY_IMAGE:latest || true"
+        - ssh -i $ID_RSA -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_IP "docker container rm -f qfirbackend  || true"
+        - echo $CI_PROJECT_NAME:latest
+        - echo $CI_PROJECT_NAME
+        - echo $CI_REGISTRY_IMAGE
+        - echo $CI_COMMIT_REF_NAME
+        - echo $TAG_COMMIT
+        - ssh -i $ID_RSA -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_IP "docker run -dit -p 3001:8000 --name $CI_PROJECT_NAME --restart unless-stopped $CI_REGISTRY_IMAGE:latest"
+    environment:
+        name: production
+        url: http://...
+    only:
+        - master
